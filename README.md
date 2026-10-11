@@ -21,23 +21,73 @@ The supplied service runs as root to read the system journal and applies systemd
 
 ## Installation
 
-Clone this repository and run the following commands from its directory:
+Run these steps in the terminal of the **Linux server you want to monitor**, not on your Mac or Windows computer. If you manage the server remotely, connect to it first using your usual SSH connection. You need Git, Python 3.9 or later, and permission to run `sudo` commands.
+
+These instructions are for a first installation. If you already run an SSH alert service, check your existing setup before starting another instance. Repeating the configuration-copy step below overwrites the existing configuration file.
+
+### 1. Download the project
+
+```bash
+git clone https://github.com/daedricc/ssh-email-alerts.git
+cd ssh-email-alerts
+```
+
+`git clone` downloads the project into a new `ssh-email-alerts` folder. `cd` enters that folder. Run the remaining steps from this directory so the source files can be found. If Git is missing, install it using your Linux distribution's package manager first.
+
+### 2. Install the program and create a private configuration file
 
 ```bash
 sudo install -d -m 755 /usr/local/lib/ssh-email-alerts
 sudo install -m 644 ssh_email_alerts.py /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py
 sudo install -d -m 700 /etc/ssh-email-alerts
 sudo install -m 600 .env.example /etc/ssh-email-alerts/config.env
-sudoedit /etc/ssh-email-alerts/config.env
-sudo install -m 644 systemd/ssh-email-alerts.service /etc/systemd/system/ssh-email-alerts.service
-sudo systemctl daemon-reload
-sudo python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --test-email
-sudo systemctl enable --now ssh-email-alerts.service
 ```
 
-Set your SMTP credentials, sender, and recipient before sending a test email or starting the service. The sample uses Resend; for Resend, use your API key as `SMTP_PASSWORD`, `resend` as `SMTP_USER`, and a sender on your verified domain. Other SMTP providers are supported with their own settings.
+These commands create the program and configuration folders, then copy the program and example settings into them. `sudo` runs a command with administrator privileges; it may ask for your Linux account password. The configuration folder and file are restricted to the administrator because they will contain SMTP credentials.
+
+### 3. Enter your email settings
+
+```bash
+sudoedit /etc/ssh-email-alerts/config.env
+```
+
+This opens the configuration in your system's text editor. Replace the sample SMTP host, port, username, password, sender address, and recipient with your own settings. Set `SENDER_NAME` to the name you want recipients to see, choose `LANGUAGE=en` or `LANGUAGE=tr`, and set `TIMEZONE` to an IANA timezone such as `UTC` or `Europe/Istanbul`. Save the file and close the editor before continuing. See the configuration table below for every setting.
+
+The sample uses Resend: use your API key as `SMTP_PASSWORD`, `resend` as `SMTP_USER`, and a sender on your verified domain. Other SMTP providers are supported with their own settings.
 
 The configuration uses simple `KEY=value` lines. Shell commands, variable expansion, and multiline values are not supported. Keep the real configuration private; never commit it to GitHub.
+
+### 4. Register the background service
+
+```bash
+sudo install -m 644 systemd/ssh-email-alerts.service /etc/systemd/system/ssh-email-alerts.service
+sudo systemctl daemon-reload
+```
+
+The service file tells Linux how to run the program in the background. `daemon-reload` tells systemd to read the new service definition; it does not start the program yet.
+
+### 5. Send a test email
+
+```bash
+sudo python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --test-email
+```
+
+Check the command's result and your recipient inbox, including the spam folder. SMTP acceptance means the mail server accepted the message; it does not guarantee inbox delivery. If the test fails, review your configuration and SMTP provider settings before proceeding. The program suppresses credentials and detailed exceptions in its output.
+
+### 6. Start the service and verify it
+
+```bash
+sudo systemctl enable --now ssh-email-alerts.service
+sudo systemctl is-active ssh-email-alerts.service
+```
+
+`enable --now` starts the service immediately and enables automatic startup when the server boots. The status command should print `active`. On its first check, the service establishes a baseline without emailing historical logins. New SSH login events will then be monitored.
+
+To inspect the latest service messages:
+
+```bash
+sudo journalctl -u ssh-email-alerts.service -n 50 --no-pager
+```
 
 ## Configuration
 
