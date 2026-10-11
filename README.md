@@ -16,17 +16,26 @@ Email notifications for successful SSH logins and repeated authentication failur
 
 ## Versions and updates
 
-Check your installed version:
+Check the installed program using its full path (works from any directory):
+
+```bash
+python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --version
+```
+
+Check for a newer stable GitHub release:
+
+```bash
+python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --check-update
+```
+
+If you are inside the cloned project directory, you can instead use:
 
 ```bash
 python3 ssh_email_alerts.py --version
-```
-
-Check the latest stable GitHub release:
-
-```bash
 python3 ssh_email_alerts.py --check-update
 ```
+
+`ssh_email_alerts.py` is the Python filename; these commands require `python3`. Checking the cloned file shows that checkout's version, which may differ from the installed program. The repository name `ssh-email-alerts` uses hyphens. A short command such as `ssh-email-alerts --version` works only if a wrapper or alias has been installed separately; the standard installation below does not create one. Custom installations may use different paths.
 
 The update check requires internet access but no SMTP configuration. It prints the installed and latest version, with a release link when an update is available. A failed check exits with status 1. It never sends email, downloads a new version, or changes your installation. The running service does not check for updates automatically.
 
