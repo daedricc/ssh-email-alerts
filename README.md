@@ -14,6 +14,22 @@ Email notifications for successful SSH logins and repeated authentication failur
 - English by default, with Turkish available. Language and timezone are independent.
 - Suppresses raw journal messages, SMTP credentials, and exception details in application output.
 
+## Email previews
+
+English example emails with sender and recipient details redacted.
+
+### Successful SSH login
+
+This test preview uses an example username and IP address; it does not represent a real login event.
+
+![Simulated successful SSH login notification](docs/images/ssh-login-preview.png)
+
+### SMTP test email
+
+The `--test-email` command sends a test message to verify your SMTP configuration.
+
+![SMTP test email](docs/images/email-test.png)
+
 ## Requirements
 
 Python 3.9 or later, Linux with systemd, SSH records under `ssh.service` or `sshd.service`, an SMTP account, and system timezone data (usually the `tzdata` package).
