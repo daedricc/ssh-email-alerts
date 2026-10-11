@@ -1,23 +1,27 @@
 # SSH Email Alerts
 
-Linux sunucularda başarılı SSH girişlerini ve tekrarlanan başarısız giriş göstergelerini e-posta ile bildirir. Python standart kütüphanesi, systemd journal ve TLS destekli SMTP kullanır; ek Python paketi gerektirmez.
+Email notifications for successful SSH logins and repeated authentication failures on Linux servers. Built with the Python standard library, the systemd journal, and TLS-enabled SMTP. No third-party Python packages required.
 
-## Özellikler
+## Features
 
-- 15 saniyede bir SSH servislerinin son 50 kaydını kontrol eder.
-- Başarılı girişleri kullanıcı, kaynak IP, yöntem ve seçilen saat dilimindeki zamanıyla bildirir.
-- Aynı IP için 10 dakikada 5 başarısızlık göstergesinde uyarı gönderir; aynı IP için 10 dakika tekrar bildirim göndermez.
-- SQLite üzerinde kalıcı takip noktası ve e-posta kuyruğu tutar. Gönderim hataları 60 saniye sonra tekrar denenir.
-- İlk başlangıçta geçmiş kayıtlar için bildirim göndermez.
-- Ham günlükleri, SMTP parolasını ve hata ayrıntılarını çıktıya yazmaz.
+- Checks the latest 50 SSH service records every 15 seconds.
+- Reports successful logins with username, source IP, authentication method, and timestamp in your preferred timezone.
+- Alerts after 5 failure indicators from the same IP within 10 minutes, with a 10-minute notification cooldown per IP.
+- Persists the journal cursor and email queue in SQLite. Failed deliveries are retried after 60 seconds.
+- Establishes a baseline on first startup without emailing historical events.
+- Configurable SMTP server, TLS mode, sender address/name, and recipient.
+- English by default, with Turkish available. Language and timezone are independent.
+- Suppresses raw journal messages, SMTP credentials, and exception details in application output.
 
-## Gereksinimler
+## Requirements
 
-Python 3.9+, systemd kullanan Linux, `ssh.service` veya `sshd.service` günlükleri ve SMTP hesabı. Servis sistem günlüklerini okuyabilmek için root olarak çalışır; systemd güvenlik kısıtlamaları uygulanır.
+Python 3.9 or later, Linux with systemd, SSH records under `ssh.service` or `sshd.service`, an SMTP account, and system timezone data (usually the `tzdata` package).
 
-## Kurulum
+The supplied service runs as root to read the system journal and applies systemd hardening settings.
 
-Bu depo dizininde çalıştırın:
+## Installation
+
+Clone this repository and run the following commands from its directory:
 
 ```bash
 sudo install -d -m 755 /usr/local/lib/ssh-email-alerts
@@ -31,50 +35,77 @@ sudo python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --test-email
 sudo systemctl enable --now ssh-email-alerts.service
 ```
 
-Örnek dosyadaki gönderen, alıcı ve SMTP parolasını değiştirin. Resend kullanıyorsanız `SMTP_PASSWORD` API anahtarını, `SMTP_USER=resend` kullanıcı adını ve doğrulanmış alan adınızdan bir göndereni kullanın. Port 465 doğrudan TLS, diğer portlar zorunlu STARTTLS kullanır. Sertifikalar doğrulanır.
+Set your SMTP credentials, sender, and recipient before sending a test email or starting the service. The sample uses Resend; for Resend, use your API key as `SMTP_PASSWORD`, `resend` as `SMTP_USER`, and a sender on your verified domain. Other SMTP providers are supported with their own settings.
 
-`config.env` basit `KEY=value` biçimindedir; shell komutu, değişken genişletme ve çok satırlı değer desteklenmez. Gerçek ayarları GitHub'a yüklemeyin.
+The configuration uses simple `KEY=value` lines. Shell commands, variable expansion, and multiline values are not supported. Keep the real configuration private; never commit it to GitHub.
 
-## Kişisel yapılandırma
+## Configuration
 
-Her kurulum kendi `config.env` dosyasını kullanır. SMTP sağlayıcısına özel hesap gerektirir; örnek dosyada gerçek kimlik bilgisi bulunmaz.
+Each installation has its own configuration file. The example contains placeholders only.
 
-| Ayar | İşlev | Örnek |
+| Setting | Purpose | Example / default |
 |---|---|---|
-| `SMTP_HOST` | SMTP sunucusu | `smtp.example.com` |
-| `SMTP_PORT` | SMTP portu | `465` veya `587` |
-| `SMTP_SECURITY` | TLS bağlantı şekli | `auto`, `ssl`, `starttls` |
-| `SMTP_USER` | SMTP kullanıcı adı | `YOUR_SMTP_USER` |
-| `SMTP_PASSWORD` | SMTP parolası / sağlayıcının uygulama parolası | `YOUR_SMTP_PASSWORD` |
-| `EMAIL_FROM` | Gönderen adresi | `alerts@example.com` |
-| `SENDER_NAME` | Gönderenin görünen adı | `SSH Alerts` |
-| `EMAIL_TO` | Alıcı adresi | `you@example.com` |
-| `LANGUAGE` | E-posta ve çalışma mesajlarının dili | `en` veya `tr` |
-| `TIMEZONE` | IANA saat dilimi | `UTC`, `Europe/Istanbul` |
+| `SMTP_HOST` | SMTP server hostname | `smtp.example.com`; default `smtp.resend.com` |
+| `SMTP_PORT` | SMTP server port | `465` (default) or `587` |
+| `SMTP_SECURITY` | TLS connection mode | `auto` (default), `ssl`, `starttls` |
+| `SMTP_USER` | SMTP username | `YOUR_SMTP_USER` |
+| `SMTP_PASSWORD` | SMTP password or provider app password | `YOUR_SMTP_PASSWORD` |
+| `EMAIL_FROM` | Sender email address | `alerts@example.com` |
+| `SENDER_NAME` | Optional sender display name | `SSH Alerts` |
+| `EMAIL_TO` | Recipient email address | `you@example.com` |
+| `LANGUAGE` | Email and runtime message language | `en` (default) or `tr` |
+| `TIMEZONE` | IANA timezone for login timestamps | `UTC` (default), `Europe/Istanbul` |
 
-`SMTP_SECURITY=auto`, 465 portunda doğrudan TLS, diğer portlarda STARTTLS seçer. Özel port için `ssl` veya `starttls` açıkça seçilebilir. Şifresiz bağlantı desteklenmez. SMTP sunucusunun izin verdiği gönderen adresini kullanın.
+`SMTP_SECURITY=auto` uses implicit TLS on port 465 and mandatory STARTTLS on other ports. Set `ssl` or `starttls` explicitly for a custom port. Certificate verification is always enabled. Use a sender address your SMTP provider permits.
 
-Türkiye örneği: `LANGUAGE=tr` ve `TIMEZONE=Europe/Istanbul`. Dil seçimi saat dilimini değiştirmez; saat dilimi yaz/kış saati geçişlerini otomatik uygular. Geçersiz dil, saat dilimi veya port ayarı reddedilir. Linux dağıtımının saat dilimi verisi (genellikle `tzdata`) kurulu olmalıdır.
+For example:
 
-Ayarlar kontrollerde yeniden okunur; kuyrukta bulunan e-postalar oluşturuldukları dil ve saat dilimini korur. Çalışma mesajları seçilen dildedir; CLI yardım metni İngilizcedir.
+```ini
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USER=YOUR_SMTP_USER
+SMTP_PASSWORD=YOUR_SMTP_PASSWORD
+EMAIL_FROM=alerts@example.com
+SENDER_NAME=SSH Alerts
+EMAIL_TO=you@example.com
+LANGUAGE=en
+TIMEZONE=Europe/Berlin
+```
 
-## Kontrol ve seçenekler
+For Turkish messages and Istanbul time, set `LANGUAGE=tr` and `TIMEZONE=Europe/Istanbul`. Timezones apply daylight-saving rules automatically where applicable. Unsupported languages, invalid timezones, invalid ports, and unsupported TLS modes are rejected.
+
+Configuration is reread during checks and email delivery. Queued messages retain the language and timestamps used when they were created. CLI help is in English.
+
+## Status and command-line options
 
 ```bash
 sudo systemctl is-active ssh-email-alerts.service
 sudo journalctl -u ssh-email-alerts.service -n 50 --no-pager
 python3 ssh_email_alerts.py --help
+```
+
+- `--config PATH`: configuration file, default `/etc/ssh-email-alerts/config.env`. The `SSH_ALERT_CONFIG` environment variable is also supported.
+- `--state-dir PATH`: persistent state directory, default `/var/lib/ssh-email-alerts`.
+- `--once`: perform one check and delivery attempt.
+- `--test-email`: send a test message and exit.
+
+## Tests
+
+```bash
 python3 -m unittest discover -s tests -v
 ```
 
-`--config PATH` farklı ayar dosyası seçer; varsayılan `/etc/ssh-email-alerts/config.env` yoludur. `SSH_ALERT_CONFIG` ortam değişkeni de desteklenir. `--state-dir PATH` kalıcı veri dizinini seçer. `--once` tek kontrol yapar; `--test-email` test mesajı gönderir.
+Tests cover login parsing, queue retention and retry, first-start baseline behavior, language and timezone formatting, failure thresholds, notification cooldowns, and invalid configuration.
 
-## Sınırlar
+## Limitations
 
-Bu araç IP engellemez. Bir bağlantı birden fazla başarısızlık göstergesi oluşturabilir; eşik benzersiz bağlantı sayısı değildir. Her kontrolde yalnızca en yeni 50 kayıt okunur: yüksek trafik veya uzun kesintilerde aradaki olaylar atlanabilir ve yoğunluk bildirimi oluşturulur. Journal silinir veya takip noktası geçersiz olursa servis kontrol hatası bildirir; otomatik takip noktası sıfırlaması yoktur.
+This tool sends notifications; it does not block IPs. One connection can produce multiple failure indicators, so the threshold is not a count of unique connections.
 
-SMTP kabulü gelen kutusuna teslim garantisi değildir. SMTP kabulünden sonra süreç kesilirse aynı mesaj tekrar gönderilebilir. Uzun SMTP kesintilerinde kuyruk büyüyebilir. Root erişimini ele geçiren saldırgan günlükleri ve servisi değiştirebilir.
+Only the newest 50 journal records are read per check. High traffic or a long interruption can cause intermediate events to be skipped; a log-volume alert is queued when a check reaches this limit. If journal records are removed or the cursor becomes invalid, the service reports a check failure; automatic cursor recovery is not implemented.
 
-## Lisans
+SMTP acceptance does not guarantee inbox delivery. A process interruption after SMTP acceptance may cause a duplicate message. The queue can grow during extended SMTP outages. An attacker with root access can alter the service and logs.
 
-Henüz lisans seçilmedi. Açık kaynak kullanım ve dağıtım izni için yayımlamadan önce lisans ekleyin.
+## License
+
+No license has been selected yet. This repository currently grants no explicit open-source license.
