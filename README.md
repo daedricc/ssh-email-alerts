@@ -4,12 +4,13 @@ Email notifications for successful SSH logins and repeated authentication failur
 
 ## Features
 
-- Checks the latest 50 SSH service records every 15 seconds.
+- Checks the latest 50 SSH service records at a configurable interval (15 seconds by default).
 - Reports successful logins with username, source IP, authentication method, and timestamp in your preferred timezone.
-- Alerts after 5 failure indicators from the same IP within 10 minutes, with a 10-minute notification cooldown per IP.
+- Configurable failure threshold, time window, and per-IP notification cooldown (defaults: 5 indicators within 10 minutes, 10-minute cooldown).
 - Persists the journal cursor and email queue in SQLite. Failed deliveries are retried after 60 seconds.
 - Establishes a baseline on first startup without emailing historical events.
-- Configurable SMTP server, TLS mode, sender address/name, and recipient.
+- Configurable SMTP server, TLS mode, sender address/name, and multiple recipients.
+- Validate your configuration without sending email using `--check-config`.
 - English by default, with Turkish available. Language and timezone are independent.
 - Suppresses raw journal messages, SMTP credentials, and exception details in application output.
 
@@ -66,13 +67,16 @@ sudo systemctl daemon-reload
 
 The service file tells Linux how to run the program in the background. `daemon-reload` tells systemd to read the new service definition; it does not start the program yet.
 
-### 5. Send a test email
+### 5. Validate settings and send a test email
 
 ```bash
+sudo python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --check-config
 sudo python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --test-email
 ```
 
-Check the command's result and your recipient inbox, including the spam folder. SMTP acceptance means the mail server accepted the message; it does not guarantee inbox delivery. If the test fails, review your configuration and SMTP provider settings before proceeding. The program suppresses credentials and detailed exceptions in its output.
+`--check-config` checks local syntax, required fields, email address format, language, timezone, TLS mode, and numeric ranges. It does not connect to SMTP, validate credentials with your provider, or create a state database.
+
+Check the test-email command's result and your recipient inbox, including the spam folder. SMTP acceptance means the mail server accepted the message; it does not guarantee inbox delivery. If the test fails, review your configuration and SMTP provider settings before proceeding. The program suppresses credentials and detailed exceptions in its output.
 
 ### 6. Start the service and verify it
 
@@ -102,9 +106,13 @@ Each installation has its own configuration file. The example contains placehold
 | `SMTP_PASSWORD` | SMTP password or provider app password | `YOUR_SMTP_PASSWORD` |
 | `EMAIL_FROM` | Sender email address | `alerts@example.com` |
 | `SENDER_NAME` | Optional sender display name | `SSH Alerts` |
-| `EMAIL_TO` | Recipient email address | `you@example.com` |
+| `EMAIL_TO` | One or more comma-separated recipients | `you@example.com,team@example.com` |
 | `LANGUAGE` | Email and runtime message language | `en` (default) or `tr` |
 | `TIMEZONE` | IANA timezone for login timestamps | `UTC` (default), `Europe/Istanbul` |
+| `POLL_INTERVAL` | Seconds between checks | `15` |
+| `FAILURE_WINDOW` | Seconds in the failure counting window | `600` |
+| `FAILURE_THRESHOLD` | Failure indicators required to trigger an alert | `5` |
+| `ALERT_COOLDOWN` | Seconds before the same IP can trigger another alert | `600` |
 
 `SMTP_SECURITY=auto` uses implicit TLS on port 465 and mandatory STARTTLS on other ports. Set `ssl` or `starttls` explicitly for a custom port. Certificate verification is always enabled. Use a sender address your SMTP provider permits.
 
@@ -123,6 +131,8 @@ LANGUAGE=en
 TIMEZONE=Europe/Berlin
 ```
 
+Numeric settings must be whole numbers from 1 to 86400. For example, `FAILURE_THRESHOLD=3` and `FAILURE_WINDOW=300` trigger an alert after three indicators from one IP in five minutes. `ALERT_COOLDOWN` is independent of the counting window.
+
 For Turkish messages and Istanbul time, set `LANGUAGE=tr` and `TIMEZONE=Europe/Istanbul`. Timezones apply daylight-saving rules automatically where applicable. Unsupported languages, invalid timezones, invalid ports, and unsupported TLS modes are rejected.
 
 Configuration is reread during checks and email delivery. Queued messages retain the language and timestamps used when they were created. CLI help is in English.
@@ -137,7 +147,8 @@ python3 ssh_email_alerts.py --help
 
 - `--config PATH`: configuration file, default `/etc/ssh-email-alerts/config.env`. The `SSH_ALERT_CONFIG` environment variable is also supported.
 - `--state-dir PATH`: persistent state directory, default `/var/lib/ssh-email-alerts`.
-- `--once`: perform one check and delivery attempt.
+- `--check-config`: validate local settings without sending email or creating state.
+- `--once`: perform one check and delivery attempt; exit with status 1 on journal or delivery failure.
 - `--test-email`: send a test message and exit.
 
 ## Tests
@@ -146,7 +157,9 @@ python3 ssh_email_alerts.py --help
 python3 -m unittest discover -s tests -v
 ```
 
-Tests cover login parsing, queue retention and retry, first-start baseline behavior, language and timezone formatting, failure thresholds, notification cooldowns, and invalid configuration.
+Unit tests cover parsing, queue behavior, configuration validation, languages, timezones, thresholds, and cooldowns. Process-level sandbox tests create temporary files, a synthetic `journalctl` executable, and an SMTP server listening only on loopback. They exercise real TLS/STARTTLS connections, sender headers, multiple recipients, temporary rejection and retry, persistent state across restarts, and certificate rejection. No external SMTP account or real SSH journal is used.
+
+The sandbox needs `openssl` and permission to bind a local socket. Its ephemeral certificate is trusted only inside test child processes; production certificate verification is unchanged. These tests do not verify the service under a real Linux systemd installation. See [the verification report](docs/verification.md) for scope and results.
 
 ## Limitations
 
@@ -154,7 +167,7 @@ This tool sends notifications; it does not block IPs. One connection can produce
 
 Only the newest 50 journal records are read per check. High traffic or a long interruption can cause intermediate events to be skipped; a log-volume alert is queued when a check reaches this limit. If journal records are removed or the cursor becomes invalid, the service reports a check failure; automatic cursor recovery is not implemented.
 
-SMTP acceptance does not guarantee inbox delivery. A process interruption after SMTP acceptance may cause a duplicate message. The queue can grow during extended SMTP outages. An attacker with root access can alter the service and logs.
+SMTP acceptance does not guarantee inbox delivery. A process interruption after SMTP acceptance may cause a duplicate message. If any recipient is rejected, the message remains queued and is retried for all recipients; recipients who already accepted it may receive duplicates. The queue can grow during extended SMTP outages. Pending messages are still attempted when journal reads fail. An attacker with root access can alter the service and logs.
 
 ## License
 

@@ -71,7 +71,7 @@ class AlertsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.env'
             base = 'SMTP_USER=example\nSMTP_PASSWORD=YOUR_PASSWORD\nEMAIL_FROM=alerts@example.com\nEMAIL_TO=you@example.com\n'
-            for invalid in ('LANGUAGE=xx', 'TIMEZONE=Invalid/Zone', 'SMTP_PORT=0', 'SMTP_SECURITY=none'):
+            for invalid in ('LANGUAGE=xx', 'TIMEZONE=Invalid/Zone', 'SMTP_PORT=0', 'SMTP_SECURITY=none', 'POLL_INTERVAL=0', 'FAILURE_WINDOW=-1', 'FAILURE_THRESHOLD=x', 'ALERT_COOLDOWN=86401', 'EMAIL_TO=bad-address', 'EMAIL_FROM=bad-address'):
                 config.write_text(base + invalid + '\n')
                 with patch.object(alerts, 'CONFIG', str(config)), self.assertRaises(Exception):
                     alerts.settings()
