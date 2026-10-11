@@ -14,6 +14,39 @@ Email notifications for successful SSH logins and repeated authentication failur
 - English by default, with Turkish available. Language and timezone are independent.
 - Suppresses raw journal messages, SMTP credentials, and exception details in application output.
 
+## Versions and updates
+
+Check your installed version:
+
+```bash
+python3 ssh_email_alerts.py --version
+```
+
+Check the latest stable GitHub release:
+
+```bash
+python3 ssh_email_alerts.py --check-update
+```
+
+The update check requires internet access but no SMTP configuration. It prints the installed and latest version, with a release link when an update is available. A failed check exits with status 1. It never sends email, downloads a new version, or changes your installation. The running service does not check for updates automatically.
+
+For GitHub release notifications, choose **Watch → Custom → Releases** on the repository page. Read the release notes before updating.
+
+### Update an existing installation
+
+Run these commands from your existing project clone on the Linux server:
+
+```bash
+git pull --ff-only
+python3 ssh_email_alerts.py --version
+sudo install -m 644 ssh_email_alerts.py /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py
+sudo python3 /usr/local/lib/ssh-email-alerts/ssh_email_alerts.py --check-config
+sudo systemctl restart ssh-email-alerts.service
+sudo systemctl is-active ssh-email-alerts.service
+```
+
+Keep your existing `/etc/ssh-email-alerts/config.env` and `/var/lib/ssh-email-alerts` state directory. Do not repeat the example configuration copy during an upgrade. The commands above use the default installation paths and service name; adjust them if you installed elsewhere. `git pull` follows the development branch; for a specific release, use `git fetch --tags` and `git checkout v1.0.0` instead of `git pull`.
+
 ## Email previews
 
 English example emails with sender and recipient details redacted.

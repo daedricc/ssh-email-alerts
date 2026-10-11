@@ -8,7 +8,7 @@ The process-level sandbox creates a temporary configuration, SQLite state direct
 
 ## Results
 
-All 13 tests pass with:
+All 19 tests pass with:
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -37,6 +37,8 @@ The sample configuration also passes `--check-config`. This confirms syntax, not
 ## Fixes made during verification
 
 `--once` previously returned success after a journal or email failure. It now returns status 1. Journal failures previously prevented pending email delivery; the two steps are now independent. Partial SMTP recipient rejection is now treated as a delivery failure so the queue is retained.
+
+Manual version checks are also tested: numeric version ordering, stable-release validation, response-size bounds, HTTP timeout, safe failure output, and no SMTP configuration access or email delivery from `--check-update`.
 
 ## Verification boundaries
 

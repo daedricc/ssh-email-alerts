@@ -12,9 +12,14 @@ import sqlite3
 import ssl
 import subprocess
 import time
+import urllib.request
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr, getaddresses
 from zoneinfo import ZoneInfo
+
+VERSION = '1.0.0'
+RELEASE_API = 'https://api.github.com/repos/daedricc/ssh-email-alerts/releases/latest'
+RELEASE_URL = 'https://github.com/daedricc/ssh-email-alerts/releases'
 
 CONFIG = os.environ.get('SSH_ALERT_CONFIG', '/etc/ssh-email-alerts/config.env')
 INTERVAL = 15
@@ -36,6 +41,9 @@ MESSAGES = {
         'delivered': 'SSH notification accepted by SMTP server.',
         'test_failed': 'Test email failed; secret/error details suppressed.',
         'test_ok': 'Test email accepted by SMTP server; inbox delivery not yet confirmed.',
+        'update_body': 'Installed version: {installed}\nNew version: {latest}\nRelease notes: {url}\nUpdate manually; no software was downloaded or installed.',
+        'update_failed': 'Version check unavailable; details suppressed.',
+        'up_to_date': 'Installed version: {installed}; latest stable release: {latest}. No newer release found.',
         'config_ok': 'Configuration is valid; no email sent.',
         'config_failed': 'Configuration could not be loaded; details suppressed.',
         'check_failed': 'SSH notification check failed; retrying without exposing log details.',
@@ -54,6 +62,9 @@ MESSAGES = {
         'delivered': 'SSH bildirimi SMTP sunucusu tarafından kabul edildi.',
         'test_failed': 'Test iletisi gönderilemedi; gizli bilgiler ve hata ayrıntıları gösterilmiyor.',
         'test_ok': 'Test iletisi SMTP sunucusu tarafından kabul edildi; gelen kutusuna teslim henüz doğrulanmadı.',
+        'update_body': 'Kurulu sürüm: {installed}\nYeni sürüm: {latest}\nSürüm notları: {url}\nGüncellemeyi elle yapın; program indirilmedi veya kurulmadı.',
+        'update_failed': 'Sürüm kontrolü yapılamadı; ayrıntılar gösterilmiyor.',
+        'up_to_date': 'Kurulu sürüm: {installed}; son kararlı sürüm: {latest}. Daha yeni sürüm bulunamadı.',
         'config_ok': 'Ayarlar geçerli; e-posta gönderilmedi.',
         'config_failed': 'Ayarlar yüklenemedi; ayrıntılar gösterilmiyor.',
         'check_failed': 'SSH kontrolü başarısız; günlük ayrıntıları gösterilmeden tekrar denenecek.',
@@ -130,6 +141,32 @@ def send(subject, body):
         refused = client.send_message(msg)
         if refused:
             raise smtplib.SMTPRecipientsRefused(refused)
+
+
+def version_tuple(value):
+    match = re.fullmatch(r'v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', value)
+    if not match:
+        raise ValueError('Invalid stable release version')
+    return tuple(int(part) for part in match.groups())
+
+
+def latest_release():
+    request = urllib.request.Request(RELEASE_API, headers={
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'ssh-email-alerts/' + VERSION,
+        'X-GitHub-Api-Version': '2022-11-28',
+    })
+    with urllib.request.urlopen(request, timeout=10) as response:
+        payload = response.read(65537)
+    if len(payload) > 65536:
+        raise ValueError('Release response too large')
+    data = json.loads(payload)
+    if data.get('draft') or data.get('prerelease'):
+        raise ValueError('Not a stable release')
+    tag = data['tag_name']
+    version_tuple(tag)
+    # Construct the link locally; do not trust arbitrary response URLs or notes.
+    return tag.lstrip('v'), RELEASE_URL + '/tag/v' + tag.lstrip('v')
 
 
 def classify(message):
@@ -235,6 +272,8 @@ def main():
     global CONFIG
     os.umask(0o077)
     parser = argparse.ArgumentParser()
+    parser.add_argument('--version', action='version', version='SSH Email Alerts ' + VERSION)
+    parser.add_argument('--check-update', action='store_true')
     parser.add_argument('--config', default=CONFIG)
     parser.add_argument('--check-config', action='store_true')
     parser.add_argument('--test-email', action='store_true')
@@ -242,6 +281,17 @@ def main():
     parser.add_argument('--state-dir', default='/var/lib/ssh-email-alerts')
     args = parser.parse_args()
     CONFIG = args.config
+    if args.check_update:
+        try:
+            latest, url = latest_release()
+            if version_tuple(latest) > version_tuple(VERSION):
+                print(message('update_body', installed=VERSION, latest=latest, url=url))
+            else:
+                print(message('up_to_date', installed=VERSION, latest=latest))
+        except Exception:
+            print(message('update_failed'))
+            raise SystemExit(1)
+        return
     if args.check_config:
         try:
             settings()
