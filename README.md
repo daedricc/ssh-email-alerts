@@ -5,7 +5,7 @@ Linux sunucularda başarılı SSH girişlerini ve tekrarlanan başarısız giri�
 ## Özellikler
 
 - 15 saniyede bir SSH servislerinin son 50 kaydını kontrol eder.
-- Başarılı girişleri kullanıcı, kaynak IP, yöntem ve UTC zamanıyla bildirir.
+- Başarılı girişleri kullanıcı, kaynak IP, yöntem ve seçilen saat dilimindeki zamanıyla bildirir.
 - Aynı IP için 10 dakikada 5 başarısızlık göstergesinde uyarı gönderir; aynı IP için 10 dakika tekrar bildirim göndermez.
 - SQLite üzerinde kalıcı takip noktası ve e-posta kuyruğu tutar. Gönderim hataları 60 saniye sonra tekrar denenir.
 - İlk başlangıçta geçmiş kayıtlar için bildirim göndermez.
@@ -34,6 +34,29 @@ sudo systemctl enable --now ssh-email-alerts.service
 Örnek dosyadaki gönderen, alıcı ve SMTP parolasını değiştirin. Resend kullanıyorsanız `SMTP_PASSWORD` API anahtarını, `SMTP_USER=resend` kullanıcı adını ve doğrulanmış alan adınızdan bir göndereni kullanın. Port 465 doğrudan TLS, diğer portlar zorunlu STARTTLS kullanır. Sertifikalar doğrulanır.
 
 `config.env` basit `KEY=value` biçimindedir; shell komutu, değişken genişletme ve çok satırlı değer desteklenmez. Gerçek ayarları GitHub'a yüklemeyin.
+
+## Kişisel yapılandırma
+
+Her kurulum kendi `config.env` dosyasını kullanır. SMTP sağlayıcısına özel hesap gerektirir; örnek dosyada gerçek kimlik bilgisi bulunmaz.
+
+| Ayar | İşlev | Örnek |
+|---|---|---|
+| `SMTP_HOST` | SMTP sunucusu | `smtp.example.com` |
+| `SMTP_PORT` | SMTP portu | `465` veya `587` |
+| `SMTP_SECURITY` | TLS bağlantı şekli | `auto`, `ssl`, `starttls` |
+| `SMTP_USER` | SMTP kullanıcı adı | `YOUR_SMTP_USER` |
+| `SMTP_PASSWORD` | SMTP parolası / sağlayıcının uygulama parolası | `YOUR_SMTP_PASSWORD` |
+| `EMAIL_FROM` | Gönderen adresi | `alerts@example.com` |
+| `SENDER_NAME` | Gönderenin görünen adı | `SSH Alerts` |
+| `EMAIL_TO` | Alıcı adresi | `you@example.com` |
+| `LANGUAGE` | E-posta ve çalışma mesajlarının dili | `en` veya `tr` |
+| `TIMEZONE` | IANA saat dilimi | `UTC`, `Europe/Istanbul` |
+
+`SMTP_SECURITY=auto`, 465 portunda doğrudan TLS, diğer portlarda STARTTLS seçer. Özel port için `ssl` veya `starttls` açıkça seçilebilir. Şifresiz bağlantı desteklenmez. SMTP sunucusunun izin verdiği gönderen adresini kullanın.
+
+Türkiye örneği: `LANGUAGE=tr` ve `TIMEZONE=Europe/Istanbul`. Dil seçimi saat dilimini değiştirmez; saat dilimi yaz/kış saati geçişlerini otomatik uygular. Geçersiz dil, saat dilimi veya port ayarı reddedilir. Linux dağıtımının saat dilimi verisi (genellikle `tzdata`) kurulu olmalıdır.
+
+Ayarlar kontrollerde yeniden okunur; kuyrukta bulunan e-postalar oluşturuldukları dil ve saat dilimini korur. Çalışma mesajları seçilen dildedir; CLI yardım metni İngilizcedir.
 
 ## Kontrol ve seçenekler
 

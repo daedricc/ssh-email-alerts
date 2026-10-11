@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import json
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -31,6 +33,48 @@ class AlertsTests(unittest.TestCase):
                 sender.assert_called_once_with('subject', 'body')
             self.assertEqual(conn.execute('SELECT count(*) FROM queue').fetchone()[0], 0)
             conn.close()
+
+    def test_language_timezone_and_failure_threshold(self):
+        for language, timezone, expected, offset in (
+            ('en', 'UTC', 'Successful SSH login', '+00:00'),
+            ('tr', 'Europe/Istanbul', 'Başarılı SSH girişi', '+03:00'),
+        ):
+            with self.subTest(language=language), tempfile.TemporaryDirectory() as directory:
+                config = Path(directory) / 'config.env'
+                config.write_text('SMTP_USER=example\nSMTP_PASSWORD=YOUR_PASSWORD\nEMAIL_FROM=alerts@example.com\nEMAIL_TO=you@example.com\n'
+                                  + f'LANGUAGE={language}\nTIMEZONE={timezone}\n')
+                with patch.object(alerts, 'CONFIG', str(config)):
+                    conn = alerts.database(Path(directory))
+                    entries = [{'__CURSOR': 'baseline', 'MESSAGE': ''}]
+                    def journal(*args, **kwargs):
+                        return SimpleNamespace(returncode=0, stdout='\n'.join(json.dumps(e) for e in entries))
+                    with patch.object(alerts.subprocess, 'run', side_effect=journal), patch.object(alerts.time, 'time', return_value=1800000000):
+                        alerts.poll(conn)
+                        self.assertEqual(conn.execute('SELECT count(*) FROM queue').fetchone()[0], 0)
+                        entries[:] = [{'__CURSOR': 'login', '__REALTIME_TIMESTAMP': '1800000000000000',
+                                       'MESSAGE': 'Accepted publickey for alice from 192.0.2.1 port 42'}]
+                        alerts.poll(conn)
+                        subject, body = conn.execute('SELECT subject, body FROM queue').fetchone()
+                        self.assertIn(expected, subject)
+                        self.assertIn(offset, body)
+                        entries[:] = [{'__CURSOR': f'failed{i}', '__REALTIME_TIMESTAMP': '1800000000000000',
+                                       'MESSAGE': 'Failed password for alice from 192.0.2.2 port 42'} for i in range(5)]
+                        alerts.poll(conn)
+                        self.assertEqual(conn.execute('SELECT count(*) FROM queue').fetchone()[0], 2)
+                        entries[:] = [{'__CURSOR': 'another', '__REALTIME_TIMESTAMP': '1800000000000000',
+                                       'MESSAGE': 'Failed password for alice from 192.0.2.2 port 42'}]
+                        alerts.poll(conn)
+                        self.assertEqual(conn.execute('SELECT count(*) FROM queue').fetchone()[0], 2)
+                    conn.close()
+
+    def test_invalid_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.env'
+            base = 'SMTP_USER=example\nSMTP_PASSWORD=YOUR_PASSWORD\nEMAIL_FROM=alerts@example.com\nEMAIL_TO=you@example.com\n'
+            for invalid in ('LANGUAGE=xx', 'TIMEZONE=Invalid/Zone', 'SMTP_PORT=0', 'SMTP_SECURITY=none'):
+                config.write_text(base + invalid + '\n')
+                with patch.object(alerts, 'CONFIG', str(config)), self.assertRaises(Exception):
+                    alerts.settings()
 
 
 if __name__ == '__main__':

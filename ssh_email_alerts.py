@@ -13,15 +13,58 @@ import ssl
 import subprocess
 import time
 from email.message import EmailMessage
+from email.utils import formataddr, parseaddr
+from zoneinfo import ZoneInfo
 
 CONFIG = os.environ.get('SSH_ALERT_CONFIG', '/etc/ssh-email-alerts/config.env')
 INTERVAL = 15
 WINDOW = 600
 THRESHOLD = 5
-DISPLAY_TIMEZONE = datetime.timezone.utc
+MESSAGES = {
+    'en': {
+        'gap_subject': '[SSH Alert] High SSH log volume',
+        'gap_body': '50 SSH records were seen in one check. Some records may have been skipped; review the server logs.',
+        'success_subject': '[SSH Alert] Successful SSH login',
+        'success_body': 'SSH login detected. Timezone: {timezone}.',
+        'login': '{time} | User: {user} | Source IP: {source} | Method: {method}',
+        'failure_subject': '[SSH Alert] Repeated SSH failures',
+        'failure_body': 'Source IP: {source}\nAt least {count} failure indicators in the last 10 minutes.\nThis alert does not block IPs. Alerts for this source are muted for 10 minutes.\nOne connection may produce multiple failure indicators.',
+        'test_subject': '[SSH Alert] Email test',
+        'test_body': 'SMTP test message; this is not an attack alert.\nSuccessful logins are queued approximately every 15 seconds; the failure threshold is 5 indicators in 10 minutes.\nTimezone: {timezone}.',
+        'delivery_failed': 'Email delivery failed; queued for retry.',
+        'delivered': 'SSH notification accepted by SMTP server.',
+        'test_failed': 'Test email failed; secret/error details suppressed.',
+        'test_ok': 'Test email accepted by SMTP server; inbox delivery not yet confirmed.',
+        'config_failed': 'Configuration could not be loaded; details suppressed.',
+        'check_failed': 'SSH notification check failed; retrying without exposing log details.',
+    },
+    'tr': {
+        'gap_subject': '[SSH Alert] SSH kayıt yoğunluğu',
+        'gap_body': 'Bir kontrolde 50 SSH kaydı görüldü. Bazı kayıtlar atlanmış olabilir; sunucu günlüklerini inceleyin.',
+        'success_subject': '[SSH Alert] Başarılı SSH girişi',
+        'success_body': 'SSH giriş kaydı algılandı. Saat dilimi: {timezone}.',
+        'login': '{time} | Kullanıcı: {user} | Kaynak IP: {source} | Yöntem: {method}',
+        'failure_subject': '[SSH Alert] Tekrarlanan SSH başarısızlığı',
+        'failure_body': 'Kaynak IP: {source}\nSon 10 dakikada en az {count} başarısız SSH göstergesi.\nBu bildirim IP engellemez. Aynı kaynak için 10 dakika tekrar bildirilmez.\nBir bağlantı birden fazla başarısızlık göstergesi üretebilir.',
+        'test_subject': '[SSH Alert] E-posta testi',
+        'test_body': 'SMTP test iletisi; bu gerçek bir saldırı bildirimi değildir.\nBaşarılı girişler yaklaşık 15 saniyede kuyruğa alınır; başarısızlık eşiği 10 dakikada 5 göstergedir.\nSaat dilimi: {timezone}.',
+        'delivery_failed': 'E-posta gönderilemedi; tekrar denemek için kuyrukta tutuluyor.',
+        'delivered': 'SSH bildirimi SMTP sunucusu tarafından kabul edildi.',
+        'test_failed': 'Test iletisi gönderilemedi; gizli bilgiler ve hata ayrıntıları gösterilmiyor.',
+        'test_ok': 'Test iletisi SMTP sunucusu tarafından kabul edildi; gelen kutusuna teslim henüz doğrulanmadı.',
+        'config_failed': 'Ayarlar yüklenemedi; ayrıntılar gösterilmiyor.',
+        'check_failed': 'SSH kontrolü başarısız; günlük ayrıntıları gösterilmeden tekrar denenecek.',
+    },
+}
+LANGUAGE = 'en'
+
+
+def message(key, **values):
+    return MESSAGES[LANGUAGE][key].format(**values)
 
 
 def settings():
+    global LANGUAGE
     values = {}
     for line in Path(CONFIG).read_text().splitlines():
         if line.strip() and not line.lstrip().startswith('#') and '=' in line:
@@ -29,23 +72,39 @@ def settings():
             values[key.strip()] = value.strip().strip('\"\'')
     if not all(values.get(key) for key in ('SMTP_PASSWORD', 'SMTP_USER', 'EMAIL_FROM', 'EMAIL_TO')):
         raise ValueError('Missing mail settings')
+    language = values.get('LANGUAGE', 'en').lower()
+    if language not in MESSAGES:
+        raise ValueError('Unsupported language')
+    ZoneInfo(values.get('TIMEZONE', 'UTC'))
+    port = int(values.get('SMTP_PORT', '465'))
+    if not 1 <= port <= 65535:
+        raise ValueError('Invalid SMTP port')
+    if values.get('SMTP_SECURITY', 'auto') not in ('auto', 'ssl', 'starttls'):
+        raise ValueError('Invalid SMTP security')
+    for key in ('EMAIL_FROM', 'EMAIL_TO', 'SENDER_NAME', 'SMTP_HOST'):
+        if any(c in values.get(key, '') for c in ('\r', '\n')):
+            raise ValueError('Invalid header or host')
+    LANGUAGE = language
     return values
 
 
 def send(subject, body):
     values = settings()
     msg = EmailMessage()
-    msg['From'] = values['EMAIL_FROM']
+    msg['From'] = (formataddr((values['SENDER_NAME'], parseaddr(values['EMAIL_FROM'])[1]))
+                   if values.get('SENDER_NAME') else values['EMAIL_FROM'])
     msg['To'] = values['EMAIL_TO']
     msg['Subject'] = subject
     msg.set_content(body)
     port = int(values.get('SMTP_PORT', '465'))
     context = ssl.create_default_context()
     host = values.get('SMTP_HOST', 'smtp.resend.com')
+    security = values.get('SMTP_SECURITY', 'auto')
+    use_ssl = security == 'ssl' or (security == 'auto' and port == 465)
     connection = (smtplib.SMTP_SSL(host, port, timeout=20, context=context)
-                  if port == 465 else smtplib.SMTP(host, port, timeout=20))
+                  if use_ssl else smtplib.SMTP(host, port, timeout=20))
     with connection as client:
-        if port != 465:
+        if not use_ssl:
             client.ehlo()
             client.starttls(context=context)
             client.ehlo()
@@ -89,6 +148,9 @@ def enqueue(conn, identifier, subject, body):
 
 
 def poll(conn):
+    values = settings()
+    timezone = values.get('TIMEZONE', 'UTC')
+    display_timezone = ZoneInfo(timezone)
     previous = conn.execute("SELECT value FROM state WHERE key='cursor'").fetchone()
     args = ['journalctl', '-u', 'ssh.service', '-u', 'sshd.service', '-n', '50',
             '-o', 'json', '--no-pager']
@@ -106,9 +168,7 @@ def poll(conn):
     with conn:
         if previous:
             if len(entries) == 50:
-                enqueue(conn, 'gap-' + cursor, '[SSH Alert] SSH kayıt yoğunluğu',
-                        'Bir kontrolde 50 SSH kaydı görüldü. İnceleme sınırı nedeniyle bazı '
-                        'kayıtlar atlanmış olabilir. Sunucu üzerinde ayrıca inceleme gerekir.')
+                enqueue(conn, 'gap-' + cursor, message('gap_subject'), message('gap_body'))
             successes = []
             conn.execute('DELETE FROM failures WHERE at < ?', (now - WINDOW,))
             conn.execute('DELETE FROM cooldown WHERE at < ?', (now - WINDOW,))
@@ -119,22 +179,20 @@ def poll(conn):
                 kind, source, user, method = parsed
                 timestamp = int(event.get('__REALTIME_TIMESTAMP', int(now * 1e6))) / 1e6
                 if kind == 'success':
-                    when = datetime.datetime.fromtimestamp(timestamp, DISPLAY_TIMEZONE)
-                    successes.append(f'{when.isoformat()} | Kullanıcı: {user} | Kaynak IP: {source} | Yöntem: {method}')
+                    when = datetime.datetime.fromtimestamp(timestamp, display_timezone)
+                    successes.append(message('login', time=when.isoformat(), user=user, source=source, method=method))
                 elif timestamp >= now - WINDOW:
                     conn.execute('INSERT INTO failures VALUES (?, ?)', (source, timestamp))
                     count = conn.execute('SELECT count(*) FROM failures WHERE source=? AND at>=?',
                                          (source, now - WINDOW)).fetchone()[0]
                     cooling = conn.execute('SELECT 1 FROM cooldown WHERE source=?', (source,)).fetchone()
                     if count >= THRESHOLD and not cooling:
-                        enqueue(conn, 'failure-' + event['__CURSOR'], '[SSH Alert] Tekrarlanan SSH başarısızlığı',
-                                f'Kaynak IP: {source}\nSon 10 dakikada en az {count} başarısız SSH göstergesi.\n'
-                                'Bu bildirim IP adresini engellemez. Aynı kaynak için 10 dakika tekrar bildirilmez.\n'
-                                'Bazı bağlantılar birden fazla başarısızlık göstergesi üretebilir.')
+                        enqueue(conn, 'failure-' + event['__CURSOR'], message('failure_subject'),
+                                message('failure_body', source=source, count=count))
                         conn.execute('INSERT OR REPLACE INTO cooldown VALUES (?, ?)', (source, now))
             if successes:
-                enqueue(conn, 'success-' + cursor, '[SSH Alert] Başarılı SSH girişi',
-                        'SSH giriş kaydı algılandı. Zamanlar UTC olarak gösterilir.\n\n' + '\n'.join(successes))
+                enqueue(conn, 'success-' + cursor, message('success_subject'),
+                        message('success_body', timezone=timezone) + '\n\n' + '\n'.join(successes))
         # First start establishes a baseline; historical logins are not emailed.
         conn.execute("INSERT OR REPLACE INTO state VALUES ('cursor', ?)", (cursor,))
 
@@ -145,11 +203,11 @@ def deliver(conn):
         try:
             send(subject, body)
         except Exception:
-            print('Email delivery failed; queued for retry.', flush=True)
+            print(message('delivery_failed'), flush=True)
             return False
         with conn:
             conn.execute('DELETE FROM queue WHERE id=?', (identifier,))
-        print('SSH notification accepted by SMTP server.', flush=True)
+        print(message('delivered'), flush=True)
     return True
 
 
@@ -165,18 +223,17 @@ def main():
     CONFIG = args.config
     if args.test_email:
         try:
-            send('[SSH Alert] SSH bildirim testi',
-                 'SMTP üzerinden SSH e-posta gönderim testi. Bu ileti gerçek bir saldırı bildirimi değildir.\n'
-                 'Başarılı girişler en geç yaklaşık 15 saniyede kuyruğa alınır; başarısızlık eşiği 10 dakikada 5 göstergedir.')
+            values = settings()
+            send(message('test_subject'), message('test_body', timezone=values.get('TIMEZONE', 'UTC')))
         except Exception:
-            print('Test email failed; secret/error details suppressed.')
+            print(message('test_failed'))
             raise SystemExit(1)
-        print('Test email accepted by SMTP server; inbox delivery not yet confirmed.')
+        print(message('test_ok'))
         return
     try:
         settings()
     except Exception:
-        print('Configuration could not be loaded; details suppressed.')
+        print(message('config_failed'))
         raise SystemExit(1)
     conn = database(Path(args.state_dir))
     retry_at = 0
@@ -186,7 +243,7 @@ def main():
             if time.time() >= retry_at:
                 retry_at = 0 if deliver(conn) else time.time() + 60
         except Exception:
-            print('SSH notification check failed; retrying without exposing log details.', flush=True)
+            print(message('check_failed'), flush=True)
         if args.once:
             return
         time.sleep(INTERVAL)
